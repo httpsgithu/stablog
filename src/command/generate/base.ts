@@ -2,7 +2,6 @@ import Base from '~/src/command/base'
 import http from '~/src/library/http'
 import md5 from 'md5'
 import url from 'url'
-import moment from 'moment'
 import _ from 'lodash'
 import fs from 'fs'
 import path from 'path'
@@ -110,11 +109,16 @@ class GenerateBase extends Base {
   processContent(content: string) {
     let that = this
     // 删除noscript标签内的元素
-    function removeNoScript(rawHtml: string) {
+    function removeUselessEle(rawHtml: string) {
+      // 规范br标签
       rawHtml = _.replace(rawHtml, /<\/br>/g, '')
       rawHtml = _.replace(rawHtml, /<br>/g, '<br/>')
+      // 修复跳转链接
       rawHtml = _.replace(rawHtml, /href="\/\/link.zhihu.com'/g, 'href="https://link.zhihu.com') // 修复跳转链接
+      // 移除noscript标签
       rawHtml = _.replace(rawHtml, /\<noscript\>.*?\<\/noscript\>/g, '')
+      // 移除script标签
+      rawHtml = _.replace(rawHtml, /\<script .*?\<\/script\>/g, '')
       return rawHtml
     }
 
@@ -177,7 +181,7 @@ class GenerateBase extends Base {
       let processedHtml = strMergeList.join('')
       return processedHtml
     }
-    content = removeNoScript(content)
+    content = removeUselessEle(content)
     let tinyContentList = content.split(`<div data-key='single-page'`).map(value => {
       return replaceImgSrc(value)
     })

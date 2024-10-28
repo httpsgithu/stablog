@@ -1,4 +1,4 @@
-name: CI
+name: CI-Mac-Total
 
 on:
   push:
@@ -10,7 +10,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        node-version: [12.x]
+        node-version: ['20.18.0']
 
     steps:
       - uses: actions/checkout@v2
@@ -24,11 +24,28 @@ jobs:
         id: package-version
       - name: Show version number
         run: echo "current version is ${{ steps.package-version.outputs.version }}"
-      - run: cd ./client && yarn && cd ..
-      - run: yarn
-      - run: yarn build
+      # mac上需要预先安装vips库
+      # - run: brew install vips
+      # - run: brew install vips
+      # 先执行electron的构建, 节约调试时间
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 9
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'pnpm'
+      - name: Install dependencies
+      - run: ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
+      - run: pnpm install
+      # 只安装intel版的sharp库即可, m1上可以运行intel的代码
+      - run: pnpm install --platform=darwin --arch=x64 sharp
+      - run: cd ./client && pnpm install && cd ..
+      - run: pnpm build
         env:
           CI: true
+          CI_ENV: 'Github Action'
           GH_TOKEN: ${{ secrets.GH_TOKEN }} # 在setting中配置自定义环境变量, 参考[此处](https://help.github.com/cn/actions/configuring-and-managing-workflows/creating-and-storing-encrypted-secrets)
       - name: Create Release
         id: create_release
@@ -47,5 +64,5 @@ jobs:
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps
           asset_path: ./release/稳部落-${{ steps.package-version.outputs.version }}.dmg
-          asset_name: stablog-${{ steps.package-version.outputs.version }}.dmg
+          asset_name: stablog-mac-total-${{ steps.package-version.outputs.version }}.dmg
           asset_content_type: application/zip

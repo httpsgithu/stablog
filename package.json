@@ -1,6 +1,6 @@
 {
   "name": "stablog",
-  "version": "3.2.0",
+  "version": "3.5.4",
   "description": "稳部落. 专业备份微blog, 老铁, 稳!",
   "repository": {
     "type": "git",
@@ -10,24 +10,32 @@
   "author": "姚泽源",
   "license": "MIT",
   "scripts": {
-    "startgui": "node client/script/dev-server.js",
-    "buildgui": "node ./script/build-gui.js",
-    "start": "electron dist/index.js --debug",
+    "start": "electron dist/index.js --stablog-debug",
+    "start-client": "cd ./client && pnpm start",
     "prod": "electron dist/index.js",
-    "build": "npm run buildserver && npm run buildgui && electron-builder",
     "ace": "node dist/ace.js",
     "watch": "babel src --copy-files --watch --out-dir dist  --verbose --source-maps --extensions \".ts,.tsx,.js,.jsx\"",
     "watch-less": "less-watch-compiler",
-    "buildserver": "babel src --copy-files -d dist --verbose  --source-maps --extensions \".ts,.tsx,.js,.jsx\" ",
-    "debug-pack": "npm run buildserver && npm run buildgui && electron-builder --dir",
+    "build": "npm run rebuild-sqlite3 && npm run build-dist && electron-builder",
+    "debug-build": "npm run build-dist && electron-builder --dir",
+    "build-dist": "node script/build.js",
+    "build-server": "babel src --copy-files -d dist --verbose --extensions \".ts,.tsx,.js,.jsx\" ",
+    "tsc": "tsc",
+    "lint": "tsc && NODE_ENV=production eslint src",
+    "eslint": "eslint src",
+    "prettier-with-fix": "prettier --write \"src/**/*.{js,jsx,ts,tsx,json,less,css}\"",
     "postinstall": "electron-builder install-app-deps",
-    "rebuild-sqlite3": "electron-rebuild -f -w sqlite3"
+    "rebuild-sqlite3": "electron-rebuild -f -w better-sqlite3",
+    "build-4-local": "electron-builder"
+  },
+  "config": {
+    "forge": "./forge.config.js"
   },
   "build": {
     "productName": "稳部落",
     "appId": "stablog",
     "copyright": "@姚泽源",
-    "npmRebuild": true,
+    "npmRebuild": false,
     "buildDependenciesFromSource": true,
     "asar": false,
     "directories": {
@@ -35,7 +43,6 @@
     },
     "files": [
       "dist/**/*",
-      "client/dist/**/*",
       "node_modules/**/*"
     ],
     "win": {
@@ -47,12 +54,12 @@
           ]
         }
       ],
-      "icon": "src/public/icon/icon.png"
+      "icon": "src/public/image/icon.png"
     },
     "mac": {
       "category": "stablog.app.category.type",
       "target": "dmg",
-      "icon": "src/public/icon/icon.png"
+      "icon": "src/public/image/icon.png"
     },
     "nsis": {
       "oneClick": false,
@@ -62,39 +69,37 @@
   "dependencies": {
     "@adonisjs/ace": "^5.0.8",
     "archiver": "^3.0.0",
-    "axios": "^0.18.1",
-    "axios-cookiejar-support": "^0.5.0",
+    "axios": "^1.7.7",
+    "better-sqlite3": "^11.5.0",
     "cross-env": "^5.2.0",
+    "dayjs": "^1.11.13",
     "decode-html": "^2.0.0",
     "dotenv": "^4.0.0",
+    "fflate": "^0.8",
     "fs-extra": "^10.0.0",
-    "image-size": "^0.8.3",
+    "image-size": "^1.1.1",
     "json5": "^2.1.0",
     "jspdf": "^2.3.0",
-    "knex": "^0.20.1",
+    "knex": "^2.2.0",
     "lodash": "^4.17.5",
     "md5": "^2.2.1",
-    "moment": "^2.24.0",
     "mozjpeg-js": "^3.3.1",
     "query-string": "^6.4.2",
     "react": "^16.7.0",
     "react-dom": "^16.7.0",
     "request": "^2.88.2",
     "request-promise": "^4.2.6",
-    "sharp": "^0.28.0",
-    "shelljs": "^0.8.1",
-    "sqlite3": "^5.0.2"
+    "sharp": "^0.33.5",
+    "shelljs": "^0.8.5"
   },
   "devDependencies": {
-    "@babel/cli": "^7.2.0",
-    "@babel/core": "^7.2.0",
-    "@babel/plugin-proposal-class-properties": "^7.2.1",
-    "@babel/plugin-proposal-object-rest-spread": "^7.2.0",
-    "@babel/plugin-transform-react-jsx": "^7.3.0",
-    "@babel/polyfill": "^7.2.5",
-    "@babel/preset-env": "^7.2.0",
-    "@babel/preset-react": "^7.0.0",
-    "@babel/preset-typescript": "^7.7.4",
+    "@babel/cli": "^7.18.6",
+    "@babel/core": "^7.18.6",
+    "@babel/plugin-proposal-object-rest-spread": "^7.20.7",
+    "@babel/preset-env": "^7.18.6",
+    "@babel/preset-react": "^7.18.6",
+    "@babel/preset-typescript": "^7.18.6",
+    "@electron/rebuild": "^3.7.0",
     "@mapbox/node-pre-gyp": "^1.0.1",
     "@types/archiver": "^2.1.2",
     "@types/async": "^2.0.45",
@@ -115,13 +120,23 @@
     "@types/request-promise": "^4.1.42",
     "@types/sharp": "^0.27.3",
     "@types/shelljs": "^0.7.8",
+    "atob": "^2.1.2",
     "babel-plugin-root-import": "^6.1.0",
-    "electron": "^6.0.12",
-    "electron-builder": "^21.2.0",
-    "electron-rebuild": "^2.3.5",
+    "btoa": "^1.2.1",
+    "canvg": "^4.0.2",
+    "dompurify": "^3.1.7",
+    "electron": "32.2.0",
+    "electron-builder": "^25.1.8",
+    "eslint": "^9.12.0",
+    "eslint-config-prettier": "^8.5.0",
+    "eslint-config-react-app": "^7.0.1",
+    "eslint-plugin-prettier": "^4.2.1",
+    "html2canvas": "^1.4.1",
     "less": "^4.1.1",
     "less-watch-compiler": "^1.14.6",
-    "node-gyp": "^7.1.2",
+    "node-gyp": "^10.2.0",
+    "prettier": "^2.7.1",
+    "typescript": "^4.7.4",
     "watch": "^1.0.2"
   }
 }

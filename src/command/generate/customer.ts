@@ -15,7 +15,7 @@ import BaseView from '~/src/view/base'
 import fs from 'fs'
 import path from 'path'
 import StringUtil from '~/src/library/util/string'
-import moment from 'moment'
+import dayjs from 'dayjs'
 import * as mozjpeg from "mozjpeg-js"
 import sharp from "sharp"
 
@@ -26,13 +26,22 @@ import { BrowserWindow } from 'electron'
 import CommonUtil from '~/src/library/util/common'
 
 /**
- * 单张页面渲染时间不能超过60秒
+ * 单张页面渲染时间不能超过120秒(降低屏幕高度后, 渲染时间增加, 所以对应的最大等待时间也要增加)
  */
-const Const_Render_Html_Timeout_Second = 60
+const Const_Render_Html_Timeout_Second = 120
+/**
+ * 宽为760px的图片, 在电脑端打开正常, 但是pdf中会被拉伸到全屏大小, 成为原先的200%, 导致模糊.
+ * 为了保证pdf中图片清晰, 因此需要在截图时, 主动x2. 代价是pdf文件更大, 但可接受
+ */
+const Pixel_Zoom_Rate = 2
 /**
  * 渲染webview最大高度(经实验, 当Electron窗口高度超过16380时, 会直接黑屏卡死, 所以需要专门限制下)
  */
-const Const_Max_Webview_Render_Height_Px = 5000
+const Const_Max_Webview_Render_Height_Px = 2000 * Pixel_Zoom_Rate
+/**
+ * webview中, js滚动返回和实际完成滚动时间不一致, 因此需要额外休眠等待. 等待时间过短会截取到错误图片
+ */
+const Const_Webview_Js_Scroll_Sleep_Second = 0.5
 /**
  * 单卷中最多只能有5000条微博
  */
@@ -50,11 +59,17 @@ const Const_Max_Jpge_Height_In_Sharp_Px = 25000
  * 如果  Screen_Display_Rate 不一致， 需要提前对截图结果进行处理。 否则后续图片合并会失败
  */
 let Is_Normal_Display_Rate = true
+/**
+ * jpg图片压缩比率
+ * 实测显示, 对于相同内容文件, 压缩80%时体积1600kb, 50%时体积1000kb, 但pdf质量上没有肉眼可见区别
+ */
+const Const_Jpeg_Compress_Rate = 60
 
 
 // 硬编码传入
 let globalSubWindow: InstanceType<typeof BrowserWindow> = null
-const Const_Default_Webview_Width = 760;
+// 图片放大后, 页面宽度也要等比例放大
+const Const_Default_Webview_Width = 760 * Pixel_Zoom_Rate;
 const Const_Default_Webview_Height = 10;
 class GenerateCustomer extends Base {
   static get signature() {
@@ -80,10 +95,9 @@ class GenerateCustomer extends Base {
   CUSTOMER_CONFIG_volumeSplitCount: TaskConfig.Customer['volumeSplitCount'] = 10000
   CUSTOMER_CONFIG_postAtOrderBy: TaskConfig.Customer['postAtOrderBy'] = 'asc'
   CUSTOMER_CONFIG_imageQuilty: TaskConfig.Customer['imageQuilty'] = 'default'
-  CUSTOMER_CONFIG_pdfQuilty: TaskConfig.Customer['pdfQuilty'] = 70
   CUSTOMER_CONFIG_outputStartAtMs: TaskConfig.Customer['outputStartAtMs'] = 0
   CUSTOMER_CONFIG_outputEndAtMs: TaskConfig.Customer['outputEndAtMs'] =
-    moment()
+    dayjs()
       .add(1, 'year')
       .unix() * 1000
   CUSTOMER_CONFIG_isSkipGeneratePdf: TaskConfig.Customer['isSkipGeneratePdf'] = false
@@ -127,7 +141,6 @@ class GenerateCustomer extends Base {
     this.CUSTOMER_CONFIG_volumeSplitCount = customerTaskConfig.volumeSplitCount
     this.CUSTOMER_CONFIG_postAtOrderBy = customerTaskConfig.postAtOrderBy
     this.CUSTOMER_CONFIG_imageQuilty = customerTaskConfig.imageQuilty
-    this.CUSTOMER_CONFIG_pdfQuilty = customerTaskConfig.pdfQuilty || 60 // 加上默认值
     this.CUSTOMER_CONFIG_isSkipFetch = customerTaskConfig.isSkipFetch
     this.CUSTOMER_CONFIG_isSkipGeneratePdf = customerTaskConfig.isSkipGeneratePdf
     this.CUSTOMER_CONFIG_isRegenerateHtml2PdfImage = customerTaskConfig.isRegenerateHtml2PdfImage
@@ -195,14 +208,14 @@ class GenerateCustomer extends Base {
         bookCounter++
         let booktitle = ''
         if (weiboEpubList.length <= 1) {
-          booktitle = `${resourcePackage.userInfo.screen_name}-微博整理-(${moment
+          booktitle = `${resourcePackage.userInfo.screen_name}-微博整理-(${dayjs
             .unix(resourcePackage.startDayAt)
-            .format(DATE_FORMAT.DISPLAY_BY_DAY)}~${moment
+            .format(DATE_FORMAT.DISPLAY_BY_DAY)}~${dayjs
               .unix(resourcePackage.endDayAt)
               .format(DATE_FORMAT.DISPLAY_BY_DAY)})`
         } else {
           booktitle = `${resourcePackage.userInfo.screen_name}-微博整理-第${resourcePackage.bookIndex}/${resourcePackage.totalBookCount
-            }卷-(${moment.unix(resourcePackage.startDayAt).format(DATE_FORMAT.DISPLAY_BY_DAY)}~${moment
+            }卷-(${dayjs.unix(resourcePackage.startDayAt).format(DATE_FORMAT.DISPLAY_BY_DAY)}~${dayjs
               .unix(resourcePackage.endDayAt)
               .format(DATE_FORMAT.DISPLAY_BY_DAY)})`
         }
@@ -231,13 +244,13 @@ class GenerateCustomer extends Base {
       let splitByStr = ''
       let mblogCreateAtTimestamp = <number>mblog.created_timestamp_at
       // 按日期分页
-      splitByStr = moment.unix(mblogCreateAtTimestamp).format(this.CONST_CONFIG_DATE_FORMAT)
+      splitByStr = dayjs.unix(mblogCreateAtTimestamp).format(this.CONST_CONFIG_DATE_FORMAT)
       let record = mblogListByMergeBy.get(splitByStr)
       if (record === undefined) {
         let a: TypeWeiboListByDay = {
           title:
-            `${moment.unix(mblogCreateAtTimestamp).format(this.CONST_CONFIG_DATE_FORMAT)}`,
-          dayStartAt: moment
+            `${dayjs.unix(mblogCreateAtTimestamp).format(this.CONST_CONFIG_DATE_FORMAT)}`,
+          dayStartAt: dayjs
             .unix(mblogCreateAtTimestamp)
             .startOf(DATE_FORMAT.UNIT.DAY)
             .unix(),
@@ -255,7 +268,7 @@ class GenerateCustomer extends Base {
         }
         if (mblogCreateAtTimestamp < record.postStartAt) {
           record.postStartAt = mblogCreateAtTimestamp
-          record.dayStartAt = moment
+          record.dayStartAt = dayjs
             .unix(mblogCreateAtTimestamp)
             .startOf(DATE_FORMAT.UNIT.DAY)
             .unix()
@@ -292,7 +305,7 @@ class GenerateCustomer extends Base {
       totalMblogCount: mblogList.length,
     }
     let weiboEpub = _.cloneDeep(weiboEpubTemplate)
-    let bufEndDayAt = moment().unix()
+    let bufEndDayAt = dayjs().unix()
 
     // 将按时间顺序排列的日级别微博记录, 处理为电子书数据包
     for (let mblogListByDay of mblogListByDayList_OrderByPostStartAt) {
@@ -326,7 +339,7 @@ class GenerateCustomer extends Base {
             switch (this.CUSTOMER_CONFIG_volumeSplitBy) {
               case 'year':
                 {
-                  if (moment.unix(weiboEpub.startDayAt).format("YYYY") !== moment.unix(mblogListByDay.dayStartAt).format("YYYY")) {
+                  if (dayjs.unix(weiboEpub.startDayAt).format("YYYY") !== dayjs.unix(mblogListByDay.dayStartAt).format("YYYY")) {
                     // 发生换年, 需要进行分卷
                     weiboEpub.endDayAt = weiboEpub.weiboDayList[weiboEpub.weiboDayList.length - 1].postEndAt
                     let buffer = _.cloneDeep(weiboEpub)
@@ -343,7 +356,7 @@ class GenerateCustomer extends Base {
                 break;
               case 'month':
                 {
-                  if (moment.unix(weiboEpub.startDayAt).format("YYYY-MM") !== moment.unix(mblogListByDay.dayStartAt).format("YYYY-MM")) {
+                  if (dayjs.unix(weiboEpub.startDayAt).format("YYYY-MM") !== dayjs.unix(mblogListByDay.dayStartAt).format("YYYY-MM")) {
                     // 发生换月, 需要进行分卷
                     weiboEpub.endDayAt = weiboEpub.weiboDayList[weiboEpub.weiboDayList.length - 1].postEndAt
                     let buffer = _.cloneDeep(weiboEpub)
@@ -502,7 +515,7 @@ class GenerateCustomer extends Base {
 
   async transWeiboRecord2Image(weiboRecord: TypeMblog) {
     // 以微博创建时间和微博id作为唯一key
-    let baseFileTitle = `${moment.unix(weiboRecord.created_timestamp_at).format("YYYY-MM-DD HH：mm：ss")}_${weiboRecord.id}`
+    let baseFileTitle = `${dayjs.unix(weiboRecord.created_timestamp_at).format("YYYY-MM-DD HH：mm：ss")}_${weiboRecord.id}`
 
     let htmlUri = path.resolve(this.html2ImageCache_HtmlPath, `${baseFileTitle}.html`)
     let imageUriList: string[] = []
@@ -595,18 +608,24 @@ class GenerateCustomer extends Base {
       }, Const_Render_Html_Timeout_Second * 1000)
 
       let render = async () => {
+        // 先载入html文件
         // this.log("load url -> ", pageConfig.htmlUri)
         await webview.loadURL(htmlUri);
         // this.log("setContentSize -> ", Const_Default_Webview_Width, Const_Default_Webview_Height)
+        // 然后设置分辨率, Const_Default_Webview_Width x Const_Default_Webview_Height, 这里是正常的
         await globalSubWindow.setContentSize(
           Const_Default_Webview_Width,
           Const_Default_Webview_Height,
         );
+        // 若希望文件清晰, 分辨率需进行放大
+        globalSubWindow.webContents.setZoomFactor(Pixel_Zoom_Rate)
+
+        // 放大后页面scrollHeight为css值, 需要乘以放大系数后, 才是实际像素值
         // @alert 注意, 在这里有可能卡死, 表现为卡住停止执行. 所以需要在外部加一个超时限制
         // this.log("resize page, executeJavaScript ")
         let scrollHeight = await webview.executeJavaScript(
           `document.children[0].children[1].scrollHeight`,
-        );
+        ) * Pixel_Zoom_Rate;
 
         let imageUriList: string[] = []
         if (scrollHeight > Const_Max_Webview_Render_Height_Px) {
@@ -623,14 +642,15 @@ class GenerateCustomer extends Base {
 
           while (remainHeight >= Const_Max_Webview_Render_Height_Px) {
             let imgIndex = imgContentList.length;
-            let currentOffsetHeight = Const_Max_Webview_Render_Height_Px * imgIndex
+            // 在页面内滚动时, 需要将实际像素重新转为逻辑像素
+            let currentOffsetHeight = Const_Max_Webview_Render_Height_Px / Pixel_Zoom_Rate * imgIndex
             // 先移动到offset高度
             let command = `document.children[0].children[1].scrollTop = ${currentOffsetHeight}`
             await webview.executeJavaScript(command);
 
             // 然后对界面截屏
             // js指令执行后, 滚动到指定位置还需要时间, 所以截屏前需要sleep一下
-            await CommonUtil.asyncSleep(1000 * 0.2)
+            await CommonUtil.asyncSleep(1000 * Const_Webview_Js_Scroll_Sleep_Second)
             let nativeImg = await webview.capturePage();
             let content = await nativeImg.toJPEG(100)
 
@@ -658,7 +678,8 @@ class GenerateCustomer extends Base {
             // 首先调整页面高度
             await subWindow.setContentSize(Const_Default_Webview_Width, remainHeight);
             // 然后走流程, 捕捉界面
-            let currentOffsetHeight = Const_Max_Webview_Render_Height_Px * imgContentList.length
+            // 在页面内滚动时, 需要将实际像素重新转为逻辑像素
+            let currentOffsetHeight = Const_Max_Webview_Render_Height_Px / Pixel_Zoom_Rate * imgContentList.length
             let imgIndex = imgContentList.length;
 
             // 先移动到offset高度
@@ -666,7 +687,7 @@ class GenerateCustomer extends Base {
             await webview.executeJavaScript(command);
             // 然后对界面截屏
             // js指令执行后, 滚动到指定位置还需要时间, 所以截屏前需要sleep一下
-            await CommonUtil.asyncSleep(1000 * 0.2)
+            await CommonUtil.asyncSleep(1000 * Const_Webview_Js_Scroll_Sleep_Second)
             let nativeImg = await webview.capturePage();
 
             let content = await nativeImg.toJPEG(100)
@@ -727,7 +748,7 @@ class GenerateCustomer extends Base {
               })
               let out = mozjpeg.encode(jpgContent, {
                 //处理质量 百分比
-                quality: 80
+                quality: Const_Jpeg_Compress_Rate
               });
               jpgContent = out.data
               fs.writeFileSync(
@@ -762,7 +783,7 @@ class GenerateCustomer extends Base {
             })
             let out = mozjpeg.encode(jpgContent, {
               //处理质量 百分比
-              quality: 80
+              quality: Const_Jpeg_Compress_Rate
             });
             jpgContent = out.data
             fs.writeFileSync(
@@ -789,7 +810,7 @@ class GenerateCustomer extends Base {
 
           let out = mozjpeg.encode(jpgContent, {
             //处理质量 百分比
-            quality: 80
+            quality: Const_Jpeg_Compress_Rate
           });
           jpgContent = out.data
           let imageUri = baseImageUri + '0.jpg'
@@ -808,7 +829,15 @@ class GenerateCustomer extends Base {
         reslove({ imageUriList, isRenderSuccess: true })
       }
 
-      render()
+      render().catch(e => {
+        const error = e as Error
+
+        this.log(`${htmlUri}转换图片失败. 错误信息:`, {
+          "message": error?.message,
+          "stack": error?.stack,
+        })
+        reslove({ imageUriList: [], isRenderSuccess: false })
+      })
     })
 
   }
@@ -817,12 +846,17 @@ class GenerateCustomer extends Base {
 
     let doc = new jsPDF({
       unit: 'px',
-      format: [Const_Default_Webview_Width, 500],
+      format: [Const_Default_Webview_Width, 700],
       orientation: "landscape"
     })
-    let fontUri = path.resolve(__dirname, '../../public/font/alibaba_PuHuiTi_Regular.ttf')
+    // let fontUri = path.resolve(__dirname, '../../public/font/mi_sans_normal_thin.ttf')
+    // // 瘦身后的字体, 只支持以下文字
+    // // !"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~第卷微博整理该文件由稳部落自动生成项目主页
+    // let fontName = "mi_sans_normal_thin" 
+    // 恢复使用方正书宋字体
+    let fontUri = path.resolve(__dirname, '../../public/font/fangzheng_shusong_normal.ttf')
+    let fontName = "fangzheng_shusong_normal"
     let fontContent = fs.readFileSync(fontUri)
-    let fontName = "alibaba_PuHuiTi_Regular"
 
     doc.addFileToVFS(`${fontName}.ttf`, fontContent.toString("base64"))
     doc.addFont(`${fontName}.ttf`, fontName, "normal")
@@ -873,6 +907,10 @@ class GenerateCustomer extends Base {
     addLine("")
     addLine("该文件由稳部落自动生成")
     addLine("")
+    addLine("pdf本身支持天级别目录&文本检索, 但需要阅读器支持")
+    addLine("电脑端推荐通过 Chrome浏览器/福昕阅读器 打开")
+    addLine("手机端推荐通过 多看阅读 打开")
+    addLine("")
     addLine("项目主页")
     addLink("https://www.yaozeyuan.online/stablog")
 
@@ -901,40 +939,50 @@ class GenerateCustomer extends Base {
         for (let i = 0; i < weiboRecord.imageUriList.length; i++) {
           let imgUri = weiboRecord.imageUriList[i];
           if (fs.existsSync(imgUri) === false) {
-            // 图片本身不存在, 说明渲染失败
-            this.log(`第${weiboIndex}/${weiboDayRecord.configList.length}条微博渲染失败, 自动跳过`)
+            this.log(`第${weiboIndex}/${weiboDayRecord.configList.length}条微博, ${imgUri}渲染失败, 自动跳过`)
             continue
-          } else {
-            let imageBuffer = fs.readFileSync(imgUri)
+          }
+          const fileContent = fs.readFileSync(imgUri)
+          if (fileContent.byteLength === 0) {
+            this.log(`第${weiboIndex}/${weiboDayRecord.configList.length}条微博, ${imgUri}图片体积为0, 为非法文件, 自动跳过`)
+            continue
+          }
 
-            let size = await imageSize.imageSize(imageBuffer)
-            let { width, height } = size
-            if (!width || width <= 0 || !height || height <= 0) {
-              this.log(`第${weiboIndex}/${weiboDayRecord.configList.length}条微博截图捕获失败, 自动跳过`)
-              continue
-            }
+          let imageBuffer = fs.readFileSync(imgUri)
 
-            doc.addPage([width, height], width > height ? "landscape" : "portrait")
-            doc.addImage(
-              {
-                imageData: imageBuffer,
-                x: 0,
-                y: 0,
-                width: width,
-                height: height
-              })
-            if (i === 0) {
-              // 只在第一页添加文字
-              doc.setFontSize(0.001)
-              doc.text(weiboRecord.htmlContent, 0, 0, {
-                // align: 'center',
-              })
-            }
-            currentPageNo = currentPageNo + 1
-            if (currentPageNo % 10 === 0) {
-              // 休眠0.1秒, 避免因频繁添加页面导致界面卡死
-              await CommonUtil.asyncSleep(1000 * 0.1)
-            }
+          let size: { width: number | undefined, height: number | undefined } = { width: 0, height: 0 }
+          try {
+            size = await imageSize.imageSize(imageBuffer)
+          } catch (e) {
+            this.log(`第${weiboIndex}/${weiboDayRecord.configList.length}条微博, ${imgUri}图片宽高解析失败, 为非法文件, 自动跳过&自动删除图片`)
+            fs.unlinkSync(imgUri)
+          }
+          let { width = 0, height = 0 } = size
+          if (!width || width <= 0 || !height || height <= 0) {
+            this.log(`第${weiboIndex}/${weiboDayRecord.configList.length}条微博截图捕获失败, 自动跳过`)
+            continue
+          }
+
+          doc.addPage([width, height], width > height ? "landscape" : "portrait")
+          doc.addImage(
+            {
+              imageData: imageBuffer,
+              x: 0,
+              y: 0,
+              width: width,
+              height: height,
+            })
+          if (i === 0) {
+            // 只在第一页添加文字
+            doc.setFontSize(0.001)
+            doc.text(weiboRecord.htmlContent, 0, 0, {
+              // align: 'center',
+            })
+          }
+          currentPageNo = currentPageNo + 1
+          if (currentPageNo % 10 === 0) {
+            // 休眠0.1秒, 避免因频繁添加页面导致界面卡死
+            await CommonUtil.asyncSleep(1000 * 0.1)
           }
         }
       }

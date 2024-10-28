@@ -2,11 +2,7 @@ import axios, { AxiosRequestConfig } from 'axios'
 import RequestConfig from '~/src/config/request'
 import logger from '~/src/library/logger'
 import request from 'request-promise'
-import axiosCookieJarSupport from 'axios-cookiejar-support'
-import toughCookie from 'tough-cookie'
 import _ from 'lodash'
-
-axiosCookieJarSupport(axios)
 
 // 创建axios实例
 const http = axios.create({
@@ -27,6 +23,7 @@ class Http {
    * @param config
    */
   static async get(url: string, config: AxiosRequestConfig = {}) {
+    // 请求失败自动抛出异常
     const response = await http
       .get(
         url,
@@ -36,23 +33,13 @@ class Http {
           ...config,
           headers: {
             // 加上ua
-            'User-Agent': RequestConfig.ua,
+            'user-agent': RequestConfig.ua,
             cookie: RequestConfig.cookie,
             ...config.headers,
           },
         },
       )
-      .catch(e => {
-        logger.log(`网络请求失败, 您的账号可能因抓取频繁被认为有风险, 请6小时后再试`)
-        logger.log(`错误内容=> message:${e.message}, stack=>${e.stack}`)
-        // 避免由于status不存在导致进程退出
-        let errorStatus = _.get(e, ['response', 'status'], '')
-        if (errorStatus === 404) {
-          return undefined
-        }
-        return {}
-      })
-    const record = _.get(response, ['data'], {})
+    const record = response?.['data'] ?? {}
     return record
   }
 
